@@ -1,0 +1,90 @@
+With cohort AS (
+  SELECT user_id
+  FROM sessions
+  WHERE session_start > '2023-01-04'
+  GROUP BY user_id
+  HAVING COUNT(session_id) > 7
+  ),
+custom_data AS (
+  SELECT
+  	s.user_id,
+  	COUNT(DISTINCT s.session_id) AS session_count,
+  	ROUND(AVG(EXTRACT(MINUTE FROM (session_end - session_start))), 2) AS avg_session_duration,
+    ROUND(AVG(page_clicks), 2) AS avg_page_clicks,
+    COUNT(DISTINCT CASE WHEN NOT cancellation THEN s.trip_id END) AS total_trips,
+    ROUND(CASE WHEN COUNT(DISTINCT s.session_id) > 0 THEN
+          1.0 * COUNT(DISTINCT CASE WHEN NOT cancellation THEN s.trip_id END)/ COUNT(DISTINCT s.session_id) 
+          ELSE 0 END, 2) AS conversion_rate,
+    ROUND(1.0 * COUNT(DISTINCT CASE WHEN cancellation THEN s.trip_id END) / 
+          NULLIF(COUNT(DISTINCT CASE WHEN NOT CANCELLATION THEN s.trip_id END), 0), 2) AS cancellation_proportion,
+    COUNT(DISTINCT CASE WHEN flight_booked THEN s.trip_id END) AS total_flights_booked,
+  	ROUND(AVG(EXTRACT(EPOCH FROM (f.departure_time - s.session_end)) / 86400) 
+              ,2) AS avg_days_depatrure_book,
+  	ROUND(AVG(EXTRACT(EPOCH FROM(h.check_in_time - s.session_end)) /86400)
+          		,2) AS avg_days_checkin_book,
+  	ROUND(CASE WHEN COUNT(DISTINCT CASE WHEN flight_booked THEN s.trip_id END) > 0 THEN
+             1.0 * COUNT(DISTINCT CASE WHEN return_flight_booked THEN s.trip_id END) /  
+             COUNT(DISTINCT CASE WHEN flight_booked THEN s.trip_id END) ELSE 0 END
+             ,2) AS round_trips_proportion,
+  	ROUND(CASE WHEN COUNT(DISTINCT CASE WHEN NOT cancellation THEN s.trip_id END) > 0 THEN
+  	      1.0 * COUNT(DISTINCT CASE WHEN EXTRACT(DOW FROM departure_time) IN (5,6) 
+              AND return_flight_booked IS TRUE 
+              AND EXTRACT(DOW FROM return_time) IN (0,1) 
+              AND EXTRACT(DAY FROM (return_time - departure_time)) < 3
+              THEN f.trip_id 
+              ELSE NULL END) / COUNT(DISTINCT CASE WHEN NOT cancellation THEN s.trip_id END) ELSE 0 END
+             ,2) AS weekend_trip_proportion,
+    ROUND(AVG(base_fare_usd), 2) AS avg_flight_price_usd,
+    ROUND(AVG(flight_discount_amount), 2) AS avg_flight_discount_amount,
+    ROUND(SUM(CASE WHEN flight_discount THEN 1 ELSE 0 END)::numeric/COUNT(*),2) AS discounted_flight_proportion,
+    ROUND(AVG(seats),2) AS avg_flight_seats,
+    ROUND(AVG(checked_bags),2) AS avg_checked_bags,
+    COUNT(DISTINCT CASE WHEN hotel_booked THEN s.trip_id END) AS total_hotels_booked,
+    ROUND(AVG(hotel_per_room_usd),2) AS avg_hotel_price_usd,
+    ROUND(AVG(hotel_discount_amount),2) AS avg_hotel_discount_amount,
+    ROUND(SUM(CASE WHEN hotel_discount THEN 1 ELSE 0 END)::numeric/COUNT(*),2) AS discounted_hotel_proportion,
+    ROUND(AVG(rooms),2) AS avg_hotel_rooms,
+    ROUND(AVG(EXTRACT(DAY from (check_out_time - check_in_time))),2) AS avg_stay_duration_day,
+  	ROUND(CAST(AVG(haversine_distance(u.home_airport_lat, u.home_airport_lon, f.destination_airport_lat, f.destination_airport_lon)) AS numeric), 2) AS avg_flight_distance_from_home_km
+ FROM sessions s
+ LEFT JOIN flights f ON s.trip_id = f.trip_id
+ LEFT JOIN hotels h ON s.trip_id = h.trip_id
+ LEFT JOIN users u ON s.user_id = u.user_id
+ WHERE s.user_id IN (SELECT user_id FROM cohort)
+ GROUP BY s.user_id
+ )
+SELECT
+	u.user_id,
+  u.sign_up_date,
+  EXTRACT(YEAR from AGE(u.birthdate)) AS age,
+  u.gender,
+  u.married,
+  u.has_children,
+  u.home_country,
+  u.home_city,
+  cd.session_count,
+  cd.avg_session_duration,
+  cd.avg_page_clicks,
+  cd.total_trips,
+  cd.conversion_rate,
+  cd.cancellation_proportion,
+  cd.avg_days_depatrure_book,
+  cd.avg_days_checkin_book,
+  cd.total_flights_booked,
+  cd.avg_flight_price_usd,
+  cd.avg_flight_discount_amount,
+  cd.discounted_flight_proportion,
+  cd.round_trips_proportion,
+  cd.avg_flight_seats,
+  cd.avg_checked_bags,
+  cd.total_hotels_booked,
+  cd.avg_hotel_price_usd,
+  cd.avg_hotel_discount_amount,
+  cd.discounted_hotel_proportion,
+  cd.avg_hotel_rooms,
+  cd.avg_stay_duration_day,
+  cd.avg_flight_distance_from_home_km,
+  cd.weekend_trip_proportion
+ FROM users u
+ JOIN custom_data cd ON u.user_id = cd.user_id
+ 
